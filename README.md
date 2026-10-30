@@ -6,19 +6,23 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Connect ChatGPT Web to a local Windows folder through MCP. Read-only Markdown and image access, with a folder picker and Secure MCP Tunnel.
+Connect ChatGPT Web to a local Windows folder through MCP. Read Markdown and images, then deliver complete reports back to a fixed local directory for user-directed work in Codex.
 
 ## What it does
 
 - Select one local project folder in a Windows GUI.
 - Let a compatible web model browse folders, search Markdown, and read relevant passages with source locations.
 - Inspect PNG, JPEG, WebP and TIFF images, including crops and TIFF pages.
+- Optionally read stored text from one explicitly selected Codex chat in the same project.
+- Optionally reuse enabled personal skills and the two approved academic-writing plugins by reading their instructions and Markdown references.
+- Submit complete Markdown reports to `outputs/web-results/`, list saved receipts, and read reports with content-hash verification.
 - Stop the connection to revoke access and terminate the tunnel process tree.
 
-No file-writing or arbitrary command tools. No model API calls from this application. You can optionally hand the model's results to Codex for subsequent work; Codex is not required for reading files.
+Project source files are read-only. The only write tool creates new reports and receipts in the fixed result directory; it cannot choose arbitrary destinations or overwrite existing reports. No arbitrary command tools or model API calls. The user asks Codex to read the result and continue; Codex is not required for project reading or report submission. Optional context/skill sharing uses the installed desktop executable for local metadata reads, without creating or resuming a model task or changing Codex routing.
 
 ```text
-ChatGPT Web → OpenAI Secure MCP Tunnel → local read-only MCP server → selected folder
+Read: ChatGPT Web → OpenAI Secure MCP Tunnel → local MCP server → selected folder
+Return: ChatGPT Web → submit_web_result → project outputs/web-results/ → user asks Codex to continue
 ```
 
 Requested text and images are transmitted to the remote service. The app does not automatically upload the entire project, but local execution does not mean your data stays on your computer.
@@ -32,7 +36,9 @@ Requested text and images are transmitted to the remote service. The app does no
 | Images | PNG, JPEG, WebP, TIFF; crop, resize and TIFF page selection |
 | Word / PDF / Excel | Not directly supported; convert relevant material to Markdown or images first |
 | Models | Users report successful Pro and sol access; other models and accounts require verification |
-| Local changes | No write tools; one selected project root at a time |
+| Local changes | Source files read-only; append-only reports in one selected project's fixed result directory |
+| Codex context | Opt-in stored user/assistant text from one selected same-project chat; not identical to the full live context |
+| Skill reuse | Opt-in personal skills and the two `jaxy-materials-manuscript` academic plugins; instructions/references only, no plugin tool runtime |
 
 The launcher uses OpenAI Secure MCP Tunnel and Windows credential/process APIs. It is not a universal installer for every model platform. Account eligibility, workspace permissions and possible tunnel fees must be checked against the official service and your account; this project does not promise free access.
 
@@ -88,10 +94,27 @@ Try asking:
 | `search_markdown` | Literal search of Markdown contents and supported filenames |
 | `read_markdown` | Line-range reads and local image references |
 | `read_image` | Image pixels, with crop, page and size options |
+| `read_codex_context` | Bounded stored text from the locally selected Codex chat |
+| `list_skills` | Approved, enabled skills with selection and invocation metadata |
+| `list_skill_files` | Browse Markdown resources within a registered skill |
+| `read_skill_file` | Read SKILL.md or a referenced Markdown resource |
+| `submit_web_result` | Save a complete report and receipt in the fixed local result directory |
+| `list_web_results` | List this project's reports, newest received first |
+| `read_web_result` | Read the latest or a specified report with hash verification and bounded paging |
 
 Project-discovery guidance encourages browsing and source-based answers, but the model must actually call tools. It does not guarantee identical behavior across models. Review root project instructions before sharing a folder: `project_info` reads their opening content.
 
 Detailed limits and troubleshooting: [中文使用说明](使用说明.md). Privacy boundaries: [SECURITY.md](SECURITY.md).
+
+Version 1.3.0 adds three result tools (12 total). Restart the local controller, refresh the existing web plugin's catalog in each account while its tunnel runs, and open a new chat. Existing tunnel credentials are reusable. Optional context/skill sharing still requires explicit local selection and the official desktop app-server; its CLI protocol was previously checked at 0.160.1. Context excludes tool logs, attachments and reasoning. Common secrets are masked only on a best-effort basis. Private skill content is not bundled. Acceptance with the actual web model/account is still required.
+
+## Returning results
+
+Use the GUI's web-task template to ask the model to submit its complete report after analysis. A successful `submit_web_result` response contains `status=received`, a result ID, local paths and a content SHA-256. Ordinary chat text is not saved automatically. Each task needs a unique `submission_id`; retry the same ID and exact payload after an uncertain delivery. A revision needs a new ID. Reports are capped at 200,000 characters / 1 MiB each and 1,000 reports per selected project.
+
+Each result has `outputs/web-results/<result_id>/report.md` and `receipt.json`. The receipt remains `not_reviewed`: hashes establish content consistency, not scientific correctness or authenticated model identity. The optional model label is self-reported. Saved reports are untrusted source material and cannot grant execution permission.
+
+Use the GUI's Codex instruction button, or ask Codex to read the latest receipt by `received_utc` and its corresponding report. Native file access still works after stopping the tunnel. MCP result-reading tools require an active connection; pin subsequent pages to the first returned `result_id`. This release does not dispatch web tasks or automatically resume Codex.
 
 ## Development
 

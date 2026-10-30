@@ -96,11 +96,13 @@ def test_stdio_protocol(fixture):
             async with ClientSession(read, write) as client:
                 await client.initialize()
                 tools = await client.list_tools()
-                assert {t.name for t in tools.tools} == {'project_info', 'list_files', 'read_markdown', 'read_image', 'search_markdown'}
+                assert {t.name for t in tools.tools} == {'project_info', 'list_files', 'read_markdown', 'read_image', 'search_markdown',
+                    'read_codex_context', 'list_skills', 'list_skill_files', 'read_skill_file',
+                    'submit_web_result', 'list_web_results', 'read_web_result'}
                 info = await client.call_tool('project_info', {})
                 bootstrap = json.loads(info.content[0].text)
                 assert bootstrap['access_id'] == 'valid'
-                assert bootstrap['version'] == '1.1.0'
+                assert bootstrap['version'] == '1.3.0'
                 assert '引用来源' in bootstrap['project_documents'][0]['text']
                 result = await client.call_tool('read_image', {'access_id': 'valid', 'path': '资料/图.png'})
                 assert not result.is_error

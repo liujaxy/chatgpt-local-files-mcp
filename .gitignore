@@ -12,12 +12,17 @@
 !/reader.py
 !/server.py
 !/workflow.py
+!/codex_readonly.py
+!/context_skills.py
+!/result_delivery.py
 !/make_sample.py
 !/requirements.lock.txt
 !/tests/
 /tests/*
 !/tests/test_control.py
 !/tests/test_reader.py
+!/tests/test_context_skills.py
+!/tests/test_result_delivery.py
 !/sample-project/
 /sample-project/*
 !/sample-project/说明.md

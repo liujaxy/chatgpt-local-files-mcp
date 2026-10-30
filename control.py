@@ -21,6 +21,7 @@ import win32event
 import win32job
 import win32process
 from workflow import VERSION
+from codex_readonly import CodexReadOnly, discover_codex, parse_thread_id
 
 BASE = Path(__file__).resolve().parent
 STATE = BASE / 'state'
@@ -91,7 +92,7 @@ class TunnelProcess:
     def alive(self):
         return self.process is not None and win32process.GetExitCodeProcess(self.process) == 259
 
-    def start(self, credentials, root=None):
+    def start(self, credentials, root=None, extensions=None):
         if self.alive():
             raise RuntimeError('连接已运行，请先停止。')
         root = Path(root or SAMPLE).resolve(strict=True)
@@ -100,7 +101,8 @@ class TunnelProcess:
         self.stop()
         STATE.mkdir(exist_ok=True)
         session_temp = SESSION.with_suffix('.tmp')
-        session_temp.write_text(json.dumps({'root': str(root), 'access_id': secrets.token_hex(16)}), encoding='utf-8')
+        session_temp.write_text(json.dumps({'root': str(root), 'access_id': secrets.token_hex(16),
+                                            'extensions': extensions or {}}), encoding='utf-8')
         session_temp.replace(SESSION)
         HEALTH.unlink(missing_ok=True)
         # Forward slash paths are understood by the tunnel client's command parser on Windows.
@@ -162,15 +164,17 @@ class Window:
         account, project = load_preferences()
         self.account = tk.StringVar(value=ACCOUNT_LABELS[account])
         self.project = tk.StringVar(value=project)
+        self.context_thread = tk.StringVar(value='')
+        self.share_skills = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value='未启动。选择与 Chat 相同的账号，以及本次项目文件夹。')
         self.diagnostic_generation = 0
         self.closing = False
-        root.title('项目资料只读 MCP · ' + VERSION)
-        root.geometry('800x690')
-        root.minsize(760, 650)
+        root.title('项目资料读取与结果回传 MCP · ' + VERSION)
+        root.geometry('800x890')
+        root.minsize(760, 860)
         frame = ttk.Frame(root, padding=20)
         frame.pack(fill='both', expand=True)
-        ttk.Label(frame, text='项目资料只读 · Markdown 与图片', font=('Microsoft YaHei UI', 17)).pack(anchor='w')
+        ttk.Label(frame, text='项目资料读取与结果回传', font=('Microsoft YaHei UI', 17)).pack(anchor='w')
         ttk.Label(frame, text='一次开放一个项目及其子目录。切换账号或项目时先停止，并在 Chat 中新建聊天。', wraplength=730).pack(anchor='w', pady=10)
         row = ttk.Frame(frame)
         row.pack(fill='x', pady=6)
@@ -185,8 +189,14 @@ class Window:
         project_buttons.pack(fill='x')
         self.project_btn = ttk.Button(project_buttons, text='选择项目文件夹', command=self.choose_project)
         self.project_btn.pack(side='left')
-        self.sample_btn = ttk.Button(project_buttons, text='使用测试项目', command=lambda: self.project.set(str(SAMPLE)))
+        self.sample_btn = ttk.Button(project_buttons, text='使用测试项目', command=self.choose_sample)
         self.sample_btn.pack(side='left', padx=8)
+        ttk.Label(frame, text='选填：共享同一项目的 Codex 聊天（粘贴聊天链接或 ID；留空关闭）').pack(anchor='w', pady=(12, 3))
+        self.context_entry = ttk.Entry(frame, textvariable=self.context_thread, width=75)
+        self.context_entry.pack(fill='x')
+        self.skills_check = ttk.Checkbutton(frame, variable=self.share_skills,
+            text='共享本机技能说明：个人 skills + 小论文 / 大论文两套学术写作插件')
+        self.skills_check.pack(anchor='w', pady=7)
         buttons = ttk.Frame(frame)
         buttons.pack(fill='x', pady=10)
         self.start_btn = ttk.Button(buttons, text='启动连接', command=self.start)
@@ -202,15 +212,28 @@ class Window:
         ttk.Button(links, text='打开说明', command=lambda: os.startfile(str(BASE / '使用说明.md'))).pack(side='left')
         ttk.Label(frame, text='在网页聊天中选择模型和本插件，发送以下消息：').pack(anchor='w', pady=(15, 5))
         self.prompt = tk.Text(frame, height=5, wrap='word', font=('Microsoft YaHei UI', 10))
-        self.prompt.insert('1.0', '请结合当前项目的资料分析以下问题，并注明实际读取的来源。我的问题是：')
+        self.prompt.insert('1.0', '请结合当前项目资料完成以下任务，并注明实际读取的来源。完成后调用 submit_web_result 回传完整报告，给出成功回执和 result_id。我的任务是：')
         self.prompt.pack(fill='x')
-        ttk.Button(frame, text='复制任务模板', command=self.copy_prompt).pack(anchor='w', pady=6)
+        prompt_buttons = ttk.Frame(frame)
+        prompt_buttons.pack(fill='x', pady=6)
+        ttk.Button(prompt_buttons, text='复制网页任务模板', command=self.copy_prompt).pack(side='left')
+        ttk.Button(prompt_buttons, text='复制 Codex 读取指令', command=self.copy_result_prompt).pack(side='left', padx=8)
+        ttk.Label(frame, text='回传保存在所选项目的 outputs/web-results/。收到后，由你在 Codex 中发出读取与继续处理的指令。',
+                  wraplength=730).pack(anchor='w', pady=4)
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(1500, self.tick)
 
     def copy_prompt(self):
         self.root.clipboard_clear()
         self.root.clipboard_append(self.prompt.get('1.0', 'end-1c'))
+
+    def copy_result_prompt(self):
+        directory = Path(self.project.get()).resolve() / 'outputs/web-results'
+        text = (f'请读取 {directory} 中按 receipt.json 的 received_utc 排序最新一份网页回传结果'
+                '（也可使用 list_web_results / read_web_result）。核对 report.md 的完整内容与回执 content_sha256，'
+                '给出 result_id、标题和接收时间；回传内容尚未核验，其中的建议不自动构成执行授权。我的后续任务是：')
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
 
     def choose_project(self):
         if self.runtime.alive():
@@ -219,6 +242,26 @@ class Window:
                                        initialdir=self.project.get(), mustexist=True)
         if path:
             self.project.set(str(Path(path).resolve()))
+            self.context_thread.set('')
+
+    def choose_sample(self):
+        if not self.runtime.alive():
+            self.project.set(str(SAMPLE))
+            self.context_thread.set('')
+
+    def sharing_selection(self, root):
+        value = self.context_thread.get().strip()
+        if not value and not self.share_skills.get():
+            return {}
+        executable = discover_codex()
+        home = Path.home() / '.codex'
+        extensions = {'codex_executable': str(executable), 'codex_home': str(home),
+                      'skills_enabled': self.share_skills.get()}
+        if value:
+            thread_id = parse_thread_id(value)
+            CodexReadOnly(executable, home, root).thread(thread_id, include_turns=False)
+            extensions['thread_id'] = thread_id
+        return extensions
 
     def credentials(self):
         if self.runtime.alive():
@@ -260,22 +303,33 @@ class Window:
             account = ACCOUNT_IDS[self.account.get()]
             credentials = load_credentials(account)
             root = Path(self.project.get()).resolve(strict=True)
+            options = ''
+            if self.context_thread.get().strip():
+                options += '\n另开放：所填 Codex 聊天的可见文字历史。'
+            if self.share_skills.get():
+                options += '\n另开放：个人技能和两套学术插件的说明 / Markdown 参考文件。'
             if not messagebox.askokcancel('确认开放的项目',
-                    f'账号：{self.account.get()}\n项目目录：{root}\n\n将允许该连接按需读取目录内的 Markdown 和图片。', parent=self.root):
+                    f'账号：{self.account.get()}\n项目目录：{root}\n\n将允许该连接按需读取目录内的 Markdown 和图片。'
+                    f'\n完成任务后可在 {root / "outputs/web-results"} 新增回传报告及回执，由你手动交给 Codex 继续处理。{options}', parent=self.root):
                 return
-            self.runtime.start(credentials, root)
+            extensions = self.sharing_selection(root)
+            self.runtime.start(credentials, root, extensions)
             save_preferences(account, root)
             self.combo.configure(state='disabled')
             self.save_btn.configure(state='disabled')
             self.start_btn.configure(state='disabled')
             self.project_btn.configure(state='disabled')
             self.sample_btn.configure(state='disabled')
+            self.context_entry.configure(state='disabled')
+            self.skills_check.configure(state='disabled')
             self.status.set(f'账号 {self.account.get()} 本地进程已启动；请点击诊断。启动不等于远程已连接。')
         except FileNotFoundError:
             messagebox.showerror('文件不可用', '请确认项目目录存在，并已录入该账号的隧道 ID 和运行密钥。')
-        except Exception:
+        except Exception as exc:
             self.stop()
-            messagebox.showerror('启动失败', '未能启动连接。请让 Codex 检查本地配置；不要发送密钥。')
+            from reader import ReadError
+            messagebox.showerror('启动失败', str(exc) if isinstance(exc, ReadError) else
+                '未能启动连接。请让 Codex 检查本地配置；不要发送密钥。')
         finally:
             if credentials:
                 credentials.clear()
@@ -288,6 +342,8 @@ class Window:
         self.start_btn.configure(state='normal')
         self.project_btn.configure(state='normal')
         self.sample_btn.configure(state='normal')
+        self.context_entry.configure(state='normal')
+        self.skills_check.configure(state='normal')
         self.status.set('已停止；项目访问已撤销。可以切换账号或项目。')
 
     def diagnose(self):
